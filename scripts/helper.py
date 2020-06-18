@@ -140,8 +140,8 @@ def encode_image(image_path, cnn_model, target_size):
 def extract_features_from_images(image_path_list: List[str], cnn_model, target_size, save_file_path: str):
     image_encodings = dict()
     for path in tqdm(image_path_list, desc='Extracting features from images'):
-        image_name = path.split('/')[-1]
-        image_encodings[image_name] = encode_image(path, cnn_model, target_size)
+        image_id = path.split('/')[-1].split('.')[0]
+        image_encodings[image_id] = encode_image(path, cnn_model, target_size)
 
     with open(save_file_path, 'wb') as f:
         pickle.dump(image_encodings, f)
@@ -166,21 +166,21 @@ def add_start_end_tokens(full_descriptions_filename: str, splitted_image_ids: Li
 
 def data_generator(
     descriptions: Dict[str, List], image_features: Dict[str, np.array], wordtoix: Dict[str, int],
-    caption_max_length: int, vocab_size: int, num_images_per_epoch: int
+    max_length: int, vocab_size: int, num_images_per_epoch: int
 ):
     """
     The data generator will yield:
         - X1: the extract features of an image (image_feature),
         - X2: the accumulated word sequences of a description related to the image (in_seq)
         -  y: the next encoded word sequence (out_seq)
-    X2 is padded with zeros up to caption_max_length in order to keep the same dimension for all X2s.
+    X2 is padded with zeros up to max_length in order to keep the same dimension for all X2s.
     """
     X1, X2, y = list(), list(), list()
     n = 0
     while 1:
         for image_id, desc_list in descriptions.items():
             n += 1
-            image_feature = image_features[image_id+'.jpg']
+            image_feature = image_features[image_id]
             for desc in desc_list:
                 seq = [wordtoix[word] for word in desc.split(' ') if word in wordtoix]
                 # split one sequence into multiple X, y pairs
@@ -188,7 +188,7 @@ def data_generator(
                     # split into input and output pair
                     in_seq, out_seq = seq[:i], seq[i]
                     # pad input sequence
-                    in_seq = pad_sequences([in_seq], maxlen=caption_max_length)[0]
+                    in_seq = pad_sequences([in_seq], maxlen=max_length)[0]
                     # encode output sequence
                     out_seq = to_categorical([out_seq], num_classes=vocab_size)[0]
                     X1.append(image_feature)
