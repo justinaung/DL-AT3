@@ -4,7 +4,6 @@ from typing import Dict, List, Set, Tuple
 from string import punctuation
 import pickle
 
-from tensorflow import keras
 from keras.applications.inception_v3 import preprocess_input
 from keras.preprocessing.sequence import pad_sequences
 from keras.utils import to_categorical
@@ -40,7 +39,7 @@ def load_descriptions(doc: str) -> Dict[str, List[str]]:
 def clean_descriptions(descriptions: Dict[str, List[str]]):
     """
     Remove punctuations, lower case, remove hanging a and s,
-    keep alpahbest only
+    keep alpahbets only
     """
     table = str.maketrans('', '', punctuation)
     for k, desc_list in descriptions.items():
@@ -150,7 +149,7 @@ def extract_features_from_images(image_path_list: List[str], cnn_model, target_s
     return image_encodings
 
 
-def add_start_end_tokens(full_descriptions_filename: str, splitted_image_ids: List[str]) -> Dict[str, List[str]]:
+def add_start_end_token(full_descriptions_filename: str, splitted_image_ids: List[str]) -> Dict[str, List[str]]:
     doc = load_doc(full_descriptions_filename)
     descriptions = defaultdict(list)
 
@@ -158,8 +157,21 @@ def add_start_end_tokens(full_descriptions_filename: str, splitted_image_ids: Li
         tokens = line.split()
         image_id, image_desc = tokens[0], ' '.join(tokens[1:])
         if image_id in splitted_image_ids:
-            desc = ' '.join(['<START>', image_desc, '<END>'])
+            desc = ' '.join(['startseq', image_desc, 'endseq'])
             descriptions[image_id].append(desc)
+
+    return dict(descriptions)
+
+
+def load_splitted_descriptions(full_descriptions_filename: str, splitted_image_ids: List[str]) -> Dict[str, List[str]]:
+    doc = load_doc(full_descriptions_filename)
+    descriptions = defaultdict(list)
+
+    for line in doc.split('\n'):
+        tokens = line.split()
+        image_id, image_desc = tokens[0], ' '.join(tokens[1:])
+        if image_id in splitted_image_ids:
+            descriptions[image_id].append(image_desc)
 
     return dict(descriptions)
 
@@ -183,6 +195,43 @@ def data_generator(
             image_feature = image_features[image_id]
             for desc in desc_list:
                 seq = [wordtoix[word] for word in desc.split(' ') if word in wordtoix]
+                # split one sequence into multiple X, y pairs
+                for i in range(1, len(seq)):
+                    # split into input and output pair
+                    in_seq, out_seq = seq[:i], seq[i]
+                    # pad input sequence
+                    in_seq = pad_sequences([in_seq], maxlen=max_length)[0]
+                    # encode output sequence
+                    out_seq = to_categorical([out_seq], num_classes=vocab_size)[0]
+                    X1.append(image_feature)
+                    X2.append(in_seq)
+                    y.append(out_seq)
+
+            if n == num_images_per_epoch:
+                yield [[np.array(X1), np.array(X2)], np.array(y)]
+                X1, X2, y = list(), list(), list()
+                n = 0
+
+                
+def data_generator_2(
+    descriptions: Dict[str, List], image_features: Dict[str, np.array], tokenizer,
+    max_length: int, vocab_size: int, num_images_per_epoch: int
+):
+    """
+    The data generator will yield:
+        - X1: the extract features of an image (image_feature),
+        - X2: the accumulated word sequences of a description related to the image (in_seq)
+        -  y: the next encoded word sequence (out_seq)
+    X2 is padded with zeros up to max_length in order to keep the same dimension for all X2s.
+    """
+    X1, X2, y = list(), list(), list()
+    n = 0
+    while 1:
+        for image_id, desc_list in descriptions.items():
+            n += 1
+            image_feature = image_features[image_id]
+            for desc in desc_list:
+                seq = tokenizer.texts_to_sequences([desc])[0]
                 # split one sequence into multiple X, y pairs
                 for i in range(1, len(seq)):
                     # split into input and output pair
