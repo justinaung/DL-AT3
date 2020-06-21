@@ -212,7 +212,7 @@ def data_generator(
                 X1, X2, y = list(), list(), list()
                 n = 0
 
-                
+
 def data_generator_2(
     descriptions: Dict[str, List], image_features: Dict[str, np.array], tokenizer,
     max_length: int, vocab_size: int, num_images_per_epoch: int
@@ -248,3 +248,62 @@ def data_generator_2(
                 yield [[np.array(X1), np.array(X2)], np.array(y)]
                 X1, X2, y = list(), list(), list()
                 n = 0
+
+
+def flatten(lst):
+    return sum(([x] if not isinstance(x, list) else flatten(x) for x in lst), [])
+
+
+def generate_caption_beam(pred_model, caption_train_tokenizer, photo, max_length, vocab_size, beam_width):
+    sequence = caption_train_tokenizer.texts_to_sequences(['startseq'])[0]
+    sequence = pad_sequences([sequence], maxlen=max_length)
+    model_softMax_output = np.squeeze(pred_model.predict([photo,sequence], verbose=0))
+    most_likely_seq=np.argsort(model_softMax_output)[-beam_width:]
+    most_likely_prob=np.log(model_softMax_output[most_likely_seq])
+
+
+    most_likely_cap = list()
+    for j in range(beam_width):
+        most_likely_cap.append(list())
+        most_likely_cap[j] =[[caption_train_tokenizer.index_word[most_likely_seq[j]]]]
+
+    for i in range(max_length):
+        temp_prob = np.zeros((beam_width, vocab_size))
+        for j in range(beam_width):
+            if most_likely_cap[j][-1] != ['endseq']: #if not terminated
+                num_words = len(most_likely_cap[j])
+                sequence = caption_train_tokenizer.texts_to_sequences(most_likely_cap[j])
+                sequence = pad_sequences(np.transpose(sequence), maxlen=max_length)
+                model_softMax_output = pred_model.predict([photo, sequence], verbose=0)
+                temp_prob[j,] = (1/(num_words)) *(most_likely_prob[j]*(num_words-1) + np.log(model_softMax_output)) #update most likily prob
+            else:
+                temp_prob[j,] = most_likely_prob[j] + np.zeros(vocab_size) - np.inf
+                temp_prob[j,0] = most_likely_prob[j]
+
+
+        x_idx, y_idx = np.unravel_index(temp_prob.flatten().argsort()[-beam_width:], temp_prob.shape)
+
+        most_likely_cap_temp = list()
+        for j in range(beam_width):
+            most_likely_prob[j] = temp_prob[x_idx[j],y_idx[j]]
+            most_likely_cap_temp.append(list())
+            most_likely_cap_temp[j] = most_likely_cap[x_idx[j]].copy()
+            if most_likely_cap_temp[j][-1] != ['endseq']:
+                most_likely_cap_temp[j].append([caption_train_tokenizer.index_word[y_idx[j]]])
+
+        most_likely_cap = most_likely_cap_temp.copy()
+
+        finished = True
+        for j in range(beam_width):
+            if most_likely_cap_temp[j][-1] != ['endseq']:
+                finished = False
+
+        if finished == True:
+            break
+
+    final_caption = list()
+
+    for j in range(beam_width):
+        final_caption.append(' '.join(flatten(most_likely_cap[j][0:-1])))
+
+    return final_caption, most_likely_prob
